@@ -7,37 +7,110 @@ from wiki_radio import _escape_json_control_chars, _parse_music_info, _parse_seg
 
 
 # ---------------------------------------------------------------------------
-# _parse_music_info
+# _parse_music_info ヘルパー
+# ---------------------------------------------------------------------------
+
+
+class _FakeAudio:
+    """mutagen が返すオブジェクトのフェイク。"""
+
+    def __init__(self, tags: dict | None):
+        self.tags = tags
+
+
+def _make_reader(tags: dict | None):
+    """指定タグを持つ FakeAudio を返す callable を生成する。"""
+
+    def reader(path, easy=True):
+        return _FakeAudio(tags)
+
+    return reader
+
+
+_NULL_READER = _make_reader(None)  # audio.tags が None のケース用
+
+
+# ---------------------------------------------------------------------------
+# _parse_music_info — メタデータ優先パス
+# ---------------------------------------------------------------------------
+
+
+class TestParseMusicInfoMetadata:
+    def test_title_and_artist_from_tags(self):
+        reader = _make_reader({"title": ["My Song"], "artist": ["My Artist"]})
+        assert _parse_music_info("any.mp3", _reader=reader) == ("My Artist", "My Song")
+
+    def test_title_only_from_tags(self):
+        reader = _make_reader({"title": ["My Song"]})
+        assert _parse_music_info("any.mp3", _reader=reader) == ("", "My Song")
+
+    def test_whitespace_in_tags_trimmed(self):
+        reader = _make_reader({"title": ["  Song  "], "artist": ["  Artist  "]})
+        assert _parse_music_info("any.mp3", _reader=reader) == ("Artist", "Song")
+
+    def test_no_title_tag_falls_back_to_filename(self):
+        # artist タグはあるが title がない → ファイル名フォールバック
+        reader = _make_reader({"artist": ["My Artist"]})
+        assert _parse_music_info("Artist - Title.mp3", _reader=reader) == ("Artist", "Title")
+
+    def test_empty_tags_falls_back_to_filename(self):
+        reader = _make_reader({})
+        assert _parse_music_info("Artist - Title.mp3", _reader=reader) == ("Artist", "Title")
+
+    def test_null_tags_falls_back_to_filename(self):
+        assert _parse_music_info("Artist - Title.mp3", _reader=_NULL_READER) == (
+            "Artist",
+            "Title",
+        )
+
+    def test_reader_returns_none_falls_back_to_filename(self):
+        assert _parse_music_info("Artist - Title.mp3", _reader=lambda p, easy=True: None) == (
+            "Artist",
+            "Title",
+        )
+
+    def test_reader_raises_falls_back_to_filename(self):
+        def failing_reader(path, easy=True):
+            raise RuntimeError("read error")
+
+        assert _parse_music_info("Artist - Title.mp3", _reader=failing_reader) == (
+            "Artist",
+            "Title",
+        )
+
+
+# ---------------------------------------------------------------------------
+# _parse_music_info — ファイル名フォールバックパス
 # ---------------------------------------------------------------------------
 
 
 class TestParseMusicInfo:
     def test_artist_and_title(self):
-        assert _parse_music_info("Artist - Title.mp3") == ("Artist", "Title")
+        assert _parse_music_info("Artist - Title.mp3", _reader=_NULL_READER) == ("Artist", "Title")
 
     def test_track_number_with_dot(self):
-        assert _parse_music_info("01. Artist - Title.mp3") == ("Artist", "Title")
+        assert _parse_music_info("01. Artist - Title.mp3", _reader=_NULL_READER) == ("Artist", "Title")
 
     def test_track_number_with_space(self):
-        assert _parse_music_info("01 Artist - Title.flac") == ("Artist", "Title")
+        assert _parse_music_info("01 Artist - Title.flac", _reader=_NULL_READER) == ("Artist", "Title")
 
     def test_title_only(self):
-        assert _parse_music_info("Title.mp3") == ("", "Title")
+        assert _parse_music_info("Title.mp3", _reader=_NULL_READER) == ("", "Title")
 
     def test_nested_directory_path(self):
-        assert _parse_music_info("/music/jazz/Artist - Title.mp3") == ("Artist", "Title")
+        assert _parse_music_info("/music/jazz/Artist - Title.mp3", _reader=_NULL_READER) == ("Artist", "Title")
 
     def test_multiple_separators_splits_on_first(self):
         # "Artist - Part1 - Part2" → artist="Artist", title="Part1 - Part2"
-        assert _parse_music_info("Artist - Part1 - Part2.mp3") == ("Artist", "Part1 - Part2")
+        assert _parse_music_info("Artist - Part1 - Part2.mp3", _reader=_NULL_READER) == ("Artist", "Part1 - Part2")
 
     def test_artist_starting_with_digit_not_stripped(self):
         # "2Pac" は数字の後が文字なのでトラック番号と誤認しない
-        assert _parse_music_info("2Pac - California Love.mp3") == ("2Pac", "California Love")
+        assert _parse_music_info("2Pac - California Love.mp3", _reader=_NULL_READER) == ("2Pac", "California Love")
 
     def test_whitespace_around_separator_trimmed(self):
         # split後に各側がstrip()される
-        assert _parse_music_info("Artist  - Title.mp3") == ("Artist", "Title")
+        assert _parse_music_info("Artist  - Title.mp3", _reader=_NULL_READER) == ("Artist", "Title")
 
 
 # ---------------------------------------------------------------------------

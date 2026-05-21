@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["httpx"]
+# dependencies = ["httpx", "mutagen"]
 # ///
 """
 wiki_radio.py — Wikipediaのランダム記事をネタにAIラジオを延々流すCLI。
@@ -434,10 +434,34 @@ def load_music_cache(music_dir: str) -> list[str]:
     ]
 
 
-def _parse_music_info(path: str) -> tuple[str, str]:
-    """ファイル名から (アーティスト, 曲名) を返す。"""
+def _parse_music_info(path: str, _reader=None) -> tuple[str, str]:
+    """埋め込みメタデータから (アーティスト, 曲名) を返す。取得できなければファイル名から推測。
+
+    _reader: mutagen.File 互換の callable。テスト時にフェイクを注入するために使う。
+    """
+    reader = _reader
+    if reader is None:
+        try:
+            from mutagen import File as MutagenFile
+
+            reader = MutagenFile
+        except ImportError:
+            reader = None
+
+    if reader is not None:
+        try:
+            audio = reader(path, easy=True)
+            if audio is not None and audio.tags:
+                title = str(audio.tags["title"][0]) if "title" in audio.tags else ""
+                artist = str(audio.tags["artist"][0]) if "artist" in audio.tags else ""
+                if title:
+                    return artist.strip(), title.strip()
+        except Exception:
+            pass
+
+    # フォールバック: ファイル名から推測
     stem = os.path.splitext(os.path.basename(path))[0]
-    stem = re.sub(r"^\d+[\.\s]+", "", stem)  # 先頭のトラック番号を除去
+    stem = re.sub(r"^\d+[\.\s]+", "", stem)
     if " - " in stem:
         artist, title = stem.split(" - ", 1)
         return artist.strip(), title.strip()
