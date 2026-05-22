@@ -187,6 +187,13 @@ class TestParseSegments:
         raw = '[{"speaker": "A", "text": "hello\nworld"}]'
         assert _parse_segments(raw, "duo") == [{"speaker": "A", "text": "hello\nworld"}]
 
+    def test_unescaped_double_quote_in_text_repaired(self):
+        # LLMがセリフ内にASCII二重引用符を埋め込んだケース → json-repair で復元
+        raw = '[{"speaker": "B", "text": "あれ？」"って感じで"}]'
+        result = _parse_segments(raw, "duo")
+        assert result[0]["speaker"] == "B"
+        assert "あれ" in result[0]["text"]
+
     def test_invalid_json_raises_value_error(self):
         with pytest.raises(ValueError, match="台本のJSONパースに失敗"):
             _parse_segments("これはJSONではありません", "duo")
