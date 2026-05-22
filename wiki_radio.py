@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["httpx", "mutagen"]
+# dependencies = ["httpx", "mutagen", "json-repair"]
 # ///
 """
 wiki_radio.py — Wikipediaのランダム記事をネタにAIラジオを延々流すCLI。
@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 import httpx
+from json_repair import repair_json
 
 # ---------------------------------------------------------------------------
 # 設定
@@ -90,8 +91,9 @@ PROMPT_DUO = """\
 - 笑い声を表現する文末や単独の「笑」は出力しない
 - 全体で150〜300秒程度
 - 専門用語は会話の中でさりげなく噛み砕く
-- 出力は **JSON配列のみ**。前後に説明やマークダウンを付けない
+- 出力は **JSON配列のみ**。コードフェンス(```)・説明・マークダウンを一切付けない
 - 各要素は {{"speaker": "A" または "B", "text": "セリフ"}}
+- セリフ(text)内でASCII二重引用符(")を使わないこと。引用が必要なら「」を使うこと
 
 記事タイトル: {title}
 記事本文(抜粋):
@@ -113,8 +115,9 @@ PROMPT_SOLO = """\
 - 笑い声を表現する文末や単独の「笑」は出力しない
 - 全体で150〜300秒程度
 - 専門用語はさりげなく噛み砕く
-- 出力は **JSON配列のみ**。前後に説明やマークダウンを付けない
+- 出力は **JSON配列のみ**。コードフェンス(```)・説明・マークダウンを一切付けない
 - 各要素は {{"speaker": "A", "text": "セリフ"}}
+- セリフ(text)内でASCII二重引用符(")を使わないこと。引用が必要なら「」を使うこと
 
 記事タイトル: {title}
 記事本文(抜粋):
@@ -304,13 +307,17 @@ def _parse_segments(raw: str, style: str) -> list[dict]:
     try:
         segs = json.loads(s)
     except json.JSONDecodeError:
-        # LLMがJSON文字列内に生の制御文字を埋め込んだ場合のフォールバック
+        # フォールバック1: 制御文字のエスケープ
         try:
             segs = json.loads(_escape_json_control_chars(s))
-        except json.JSONDecodeError as e:
-            raise ValueError(
-                f"台本のJSONパースに失敗: {e}\n--- 生出力 (先頭300文字) ---\n{raw[:300]}"
-            ) from e
+        except json.JSONDecodeError:
+            # フォールバック2: json-repair でセリフ内の未エスケープ " 等を修復
+            try:
+                segs = json.loads(repair_json(s))
+            except (json.JSONDecodeError, Exception) as e:
+                raise ValueError(
+                    f"台本のJSONパースに失敗: {e}\n--- 生出力 (先頭300文字) ---\n{raw[:300]}"
+                ) from e
     # speaker を A/B に正規化（solo は全部 A）
     out = []
     for seg in segs:
