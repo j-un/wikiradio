@@ -266,10 +266,14 @@ def _call_claude(prompt: str, model: str, max_budget_usd: float) -> str:
             check=True,
         )
     except subprocess.CalledProcessError as e:
+        # Claude CLI はエラー詳細を stdout (JSON) に書く場合があり stderr は空になる
+        detail = e.stderr.strip() or e.stdout.strip()
         raise RuntimeError(
-            f"Claude CLI エラー (exit {e.returncode}): {e.stderr.strip()}"
+            f"Claude CLI エラー (exit {e.returncode}): {detail}"
         ) from e
     data = json.loads(result.stdout)
+    if data.get("is_error"):
+        raise RuntimeError(f"Claude API エラー: {data.get('result', data)}")
     cost = data.get("total_cost_usd", 0.0)
     _log(f"  Claude費用: ${cost:.5f}")
     return data["result"].strip()
